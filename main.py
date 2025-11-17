@@ -1,98 +1,46 @@
-# main.py
-
-# -----------------------------
-# IMPORTS
-# -----------------------------
-import telebot
-import time
 import streamlit as st
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+import telebot
+import multiprocessing
+import time
 
-# -----------------------------
-# STREAMLIT UI
-# -----------------------------
-st.title("UAserver AI API")
-st.write("🚀 Starting UAserver AI 7B...")
+# -------------------------------
+# Streamlit UI
+st.title("Telegram Bot with MPT-7B Instruct")
+st.write("Loading MPT-7B model. This may take a while...")
 
-# Initialize a message queue in session_state
-if "message_queue" not in st.session_state:
-    st.session_state.message_queue = []
+# Use public model
+model_name = "mosaicml/mpt-7b-instruct"
 
-# -----------------------------
-# LOAD AI MODEL (Mistral-7B)
-# -----------------------------
-model_name = "mistralai/Mistral-7B-Instruct-v0"
-
-st.write("Loading Mistral-7B model. This may take a while...")
+# Load tokenizer and model
 tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", torch_dtype=torch.float16)
-pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=150, temperature=0.7)
+model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
 
-st.success("Mistral-7B Loaded ✅")
+# Create a text-generation pipeline
+pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, max_length=512)
 
-# -----------------------------
-# TELEGRAM BOT SETUP
-# -----------------------------
-# Leave empty for user input
-TOKEN = st.text_input("Enter your Telegram Bot Token", type="password")
+st.write("Model loaded!")
 
-bot = None
-if TOKEN:
-    bot = telebot.TeleBot(TOKEN)
-    st.success("Connected with UAserver Intelligence API 9.7.0 ✅")
+# -------------------------------
+# Telegram Bot
+API_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
+bot = telebot.TeleBot(API_TOKEN)
 
-# -----------------------------
-# AI HELPER FUNCTION
-# -----------------------------
-def ask_local_ai(msg):
-    try:
-        messages = [{"role": "user", "content": msg}]
-        out = pipe(messages)
-        if isinstance(out, list) and len(out) > 0:
-            if isinstance(out[0], dict) and "generated_text" in out[0]:
-                reply = out[0]["generated_text"]
-            else:
-                reply = str(out[0])
-        else:
-            reply = str(out)
-        return reply.strip()[:4000]
-    except Exception as e:
-        print("Error in ask_local_ai:", e)
-        return "Sorry, I could not generate a reply."
+def handle_message(message):
+    user_text = message.text
+    response = pipe(user_text)[0]['generated_text']
+    bot.send_message(message.chat.id, response)
 
-# -----------------------------
-# BOT HANDLERS
-# -----------------------------
-if bot:
+@bot.message_handler(func=lambda msg: True)
+def message_handler(msg):
+    handle_message(msg)
 
-    @bot.message_handler(commands=["start"])
-    def start_cmd(message):
-        bot.send_message(message.chat.id, "Hey ✌️ I am UAserver AI 9.7.0!")
+def start_bot():
+    bot.polling()
 
-    @bot.message_handler(commands=["stop"])
-    def stop_cmd(message):
-        bot.send_message(message.chat.id, "Stopped.")
-        raise SystemExit
-
-    @bot.message_handler(content_types=["text"])
-    def handle(message):
-        chat = message.chat.id
-        text = message.text
-
-        # Add to Streamlit message queue
-        st.session_state.message_queue.append({"text": text, "chat": chat, "msg_id": time.time()})
-
-        bot.send_chat_action(chat, "typing")
-        reply = ask_local_ai(text)
-        bot.send_message(chat, f"🔹UAserver AI: {reply}")
-
-    # -----------------------------
-    # START BOT
-    # -----------------------------
-    import threading
-
-    def start_bot():
-        bot.polling(none_stop=True)
-
-    threading.Thread(target=start_bot, daemon=True).start()
+# -------------------------------
+# Run Telegram bot in a separate process
+if __name__ == "__main__":
+    process = multiprocessing.Process(target=start_bot)
+    process.start()
+    st.write("Telegram bot is running...")
