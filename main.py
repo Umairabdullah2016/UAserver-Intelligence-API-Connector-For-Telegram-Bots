@@ -1,18 +1,9 @@
 import streamlit as st
 import telebot
-import threading
+import multiprocessing
 from transformers import pipeline
-
-# ---------------------------------
-# LOAD LOCAL AI MODEL
-# ---------------------------------
-pipe = pipeline(
-    "text-generation",
-    model="microsoft/DialoGPT-medium",
-    max_new_tokens=150,
-    temperature=0.7,
-    top_p=0.9
-)
+import torch
+import sentencepiece  # required by some models
 
 # ---------------------------------
 # STREAMLIT UI
@@ -30,25 +21,34 @@ As soon as the bot connects, it will automatically send:
 token = st.text_input("Enter Your Telegram Bot Token:", type="password")
 chat_id = st.text_input("Enter Telegram Chat ID to Send Startup Message:")
 
-# Session states
-if "bot_thread" not in st.session_state:
-    st.session_state.bot_thread = None
-
-if "bot_instance" not in st.session_state:
-    st.session_state.bot_instance = None
-
-
 # ---------------------------------
-# LOCAL AI MODEL FUNCTION
+# BOT PROCESS FUNCTION
 # ---------------------------------
-def ask_local_ai(msg):
+def start_bot_process(token, chat_id):
+    # Load AI model inside process (safe)
+    pipe = pipeline(
+        "text-generation",
+        model="microsoft/DialoGPT-medium",
+        max_new_tokens=150,
+        temperature=0.7,
+        top_p=0.9
+    )
+
+    bot = telebot.TeleBot(token)
+
+    # Send connection message immediately
     try:
-        messages = [{"role": "user", "content": msg}]
-        out = pipe(messages)
+        bot.send_message(chat_id, "Connected with UAserver Intelligence API 9.7.0")
+    except:
+        pass
 
-        # Robustly extract string from pipeline output
-        if isinstance(out, list):
-            # Flatten nested lists if necessary
+    # AI function
+    def ask_local_ai(msg):
+        try:
+            messages = [{"role": "user", "content": msg}]
+            out = pipe(messages)
+
+            # Flatten nested lists if needed
             while len(out) == 1 and isinstance(out[0], list):
                 out = out[0]
 
@@ -59,27 +59,11 @@ def ask_local_ai(msg):
                     reply = str(out[0])
             else:
                 reply = ""
-        else:
-            reply = str(out)
+            return reply.strip()[:4000]
 
-        # Limit to Telegram max message length
-        return reply.strip()[:4000]
-
-    except Exception as e:
-        print("Error in ask_local_ai:", e)
-        return "Sorry, I could not generate a reply."
-
-# ---------------------------------
-# BOT STARTUP FUNCTION
-# ---------------------------------
-def start_bot(token, chat_id):
-    bot = telebot.TeleBot(token)
-
-    # Send connection message immediately
-    try:
-        bot.send_message(chat_id, "Connected with UAserver Intelligence API 9.7.0")
-    except:
-        pass  # prevents crash if chat ID invalid
+        except Exception as e:
+            print("Error in ask_local_ai:", e)
+            return "Sorry, I could not generate a reply."
 
     # Commands
     @bot.message_handler(commands=["start"])
@@ -91,51 +75,42 @@ def start_bot(token, chat_id):
         bot.send_message(message.chat.id, "Stopped.")
         raise SystemExit
 
-    # Main message handler
+    # Message handler
     @bot.message_handler(content_types=["text"])
     def handle(message):
         chat = message.chat.id
         text = message.text
-
         bot.send_chat_action(chat, "typing")
         ai_reply = ask_local_ai(text)
-
         bot.send_message(chat, f"🔹UAserver AI: {ai_reply}")
 
-    st.session_state.bot_instance = bot
     bot.polling(none_stop=True)
 
 
 # ---------------------------------
-# START BUTTON
+# START / STOP BUTTONS
 # ---------------------------------
+if "bot_process" not in st.session_state:
+    st.session_state.bot_process = None
+
+# Start bot
 if st.button("Start UAserver AI Bot"):
-    if not token:
-        st.error("❌ Enter your bot token.")
-    elif not chat_id:
-        st.error("❌ Enter a chat ID.")
+    if not token or not chat_id:
+        st.error("❌ Enter both Bot Token and Chat ID.")
     else:
-        if st.session_state.bot_thread is None:
-            st.session_state.bot_thread = threading.Thread(
-                target=start_bot, args=(token, chat_id)
-            )
-            st.session_state.bot_thread.start()
-            st.success("✅ UAserver AI Bot Started!")
-            st.info("Telegram startup message sent.")
+        if st.session_state.bot_process is None:
+            process = multiprocessing.Process(target=start_bot_process, args=(token, chat_id))
+            process.start()
+            st.session_state.bot_process = process
+            st.success("✅ Bot started!")
         else:
             st.info("Bot is already running.")
 
-
-# ---------------------------------
-# STOP BUTTON
-# ---------------------------------
+# Stop bot
 if st.button("Stop Bot"):
-    if st.session_state.bot_instance:
-        try:
-            st.session_state.bot_instance.stop_polling()
-            st.session_state.bot_thread = None
-            st.success("🛑 Bot stopped successfully.")
-        except:
-            st.error("Error stopping bot.")
+    if st.session_state.bot_process:
+        st.session_state.bot_process.terminate()
+        st.session_state.bot_process = None
+        st.success("🛑 Bot stopped.")
     else:
         st.warning("Bot is not running.")
