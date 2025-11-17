@@ -1,4 +1,6 @@
 streamlit
 pyTelegramBotAPI
+transformers
+torch
 sentencepiece
 
