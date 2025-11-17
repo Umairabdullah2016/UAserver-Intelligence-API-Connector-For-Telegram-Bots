@@ -1,6 +1,8 @@
 streamlit
-pyTelegramBotAPI
+pytelegrambotapi
+torch==2.9.1
 transformers
-torch
 sentencepiece
-
+numpy
+typing-extensions
+rich
