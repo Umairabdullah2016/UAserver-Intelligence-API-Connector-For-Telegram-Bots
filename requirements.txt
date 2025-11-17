@@ -1,6 +1,6 @@
 streamlit
 pytelegrambotapi
-torch==2.9.1
+torch
 transformers
 sentencepiece
 numpy
