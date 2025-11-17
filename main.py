@@ -11,7 +11,7 @@ st.title("UAserver AI with Putter.js (v9.7.0)")
 
 st.markdown("""
 Enter your **Telegram Bot Token** and **Chat ID** below.
-Messages will go through **Putter.js AI** in HTML and the reply will be sent back to Telegram.
+Telegram messages will be passed to **Putter.js AI** in HTML and the AI reply will be sent back to Telegram automatically.
 """)
 
 token = st.text_input("Enter Your Telegram Bot Token:", type="password")
@@ -32,28 +32,25 @@ reply_queue = st.session_state.reply_queue
 # ---------------------------------
 # JS AI HTML component
 # ---------------------------------
-html_code = """
-<div id="js-ai"></div>
-<script src="https://cdn.jsdelivr.net/npm/puter.js"></script>
-<script>
-window.addEventListener("message", async function(event) {
-    let data = event.data;
-    try {
-        let obj = JSON.parse(data);
-        if(obj.user_msg){
-            // Call Putter.js AI
-            let preply = await Putter.generate(obj.user_msg);
-            // Send back to Python via postMessage
-            window.parent.postMessage(JSON.stringify({preply: preply, msg_id: obj.msg_id}), "*");
-        }
-    } catch(e){
-        console.log("Error:", e);
-    }
-});
-</script>
-"""
+def render_js_ai(latest_message):
+    msg_json = json.dumps(latest_message)
+    html_code = f"""
+    <div id="js-ai"></div>
+    <script src="https://cdn.jsdelivr.net/npm/puter.js"></script>
+    <script>
+    let msg = {msg_json};
+    if(msg.text){{
+        Putter.generate(msg.text).then(preply => {{
+            window.parent.postMessage(JSON.stringify({{preply: preply, msg_id: msg.msg_id}}), "*");
+        }});
+    }}
+    </script>
+    """
+    st.components.v1.html(html_code, height=200)
 
-st.components.v1.html(html_code, height=200)
+# Show latest Telegram message in JS AI
+latest_message = message_queue[-1] if len(message_queue) > 0 else {"text":"", "msg_id":0}
+render_js_ai(latest_message)
 
 # ---------------------------------
 # Function to run Telegram bot
@@ -70,20 +67,19 @@ def start_bot(token, chat_id, message_queue, reply_queue):
     # Handle text messages
     @bot.message_handler(content_types=["text"])
     def handle(message):
-        # Put message in the shared queue
         msg_id = time.time()
         message_queue.append({"text": message.text, "chat": message.chat.id, "msg_id": msg_id})
 
         # Wait for JS reply (polling)
         start_time = time.time()
-        reply = "..."  # fallback if no reply
-        while time.time() - start_time < 10:  # 10 sec timeout
+        reply = "Sorry, no reply from AI."
+        while time.time() - start_time < 15:  # 15 sec timeout
             for r in reply_queue:
                 if r["msg_id"] == msg_id:
                     reply = r["preply"]
                     reply_queue.remove(r)
                     break
-            if reply != "...":
+            if reply != "Sorry, no reply from AI.":
                 break
             time.sleep(0.5)
 
@@ -115,3 +111,25 @@ if st.button("Stop Bot"):
         st.success("🛑 Bot stopped.")
     else:
         st.warning("Bot is not running.")
+
+# ---------------------------------
+# JS → Python listener
+# ---------------------------------
+# Streamlit automatically receives messages via `window.postMessage`
+# We need to poll the browser messages in Streamlit. This is handled by a small JS snippet:
+st.markdown("""
+<script>
+window.addEventListener("message", function(event) {
+    let data = event.data;
+    try{
+        let obj = JSON.parse(data);
+        if(obj.preply && obj.msg_id){
+            // Append to Streamlit reply queue
+            fetch(`/__reply__?data=${encodeURIComponent(JSON.stringify(obj))}`);
+        }
+    }catch(e){
+        console.log("Error parsing message:", e);
+    }
+});
+</script>
+""", unsafe_allow_html=True)
