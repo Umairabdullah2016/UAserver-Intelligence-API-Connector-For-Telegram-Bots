@@ -2,39 +2,41 @@ import streamlit as st
 import telebot
 import multiprocessing
 import time
-from transformers import pipeline
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
 
 # ---------------------------------
 # Streamlit UI
 # ---------------------------------
-st.title("UAserver AI Telegram Bot (Python AI) v9.7.0")
+st.title("UAserver AI Telegram Bot (Mistral‑12B) v9.7.0")
 
 st.markdown("""
 Enter your **Telegram Bot Token** and **Chat ID** below.
-The bot will automatically reply using Python AI (DialoGPT).
+The bot will automatically reply using Mistral‑12B Python AI.
 """)
 
 token = st.text_input("Enter Your Telegram Bot Token:", type="password")
 chat_id = st.text_input("Enter Telegram Chat ID:", value="")
 
 # ---------------------------------
-# Multiprocessing manager & queues
+# Multiprocessing manager & state
 # ---------------------------------
 if "manager" not in st.session_state:
     st.session_state.manager = multiprocessing.Manager()
     st.session_state.bot_process = None
 
 # ---------------------------------
-# Function to start bot
+# Function to start the bot
 # ---------------------------------
 def start_bot(token, chat_id):
-    # Load DialoGPT AI
-    pipe = pipeline(
-        "text-generation",
-        model="microsoft/DialoGPT-medium",
-        max_new_tokens=150,
-        temperature=0.7,
-        top_p=0.9
+    # Load Mistral‑12B
+    model_name = "mistralai/Mistral-12B-Instruct-v0"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        device_map="auto",
+        torch_dtype=torch.float16,
+        load_in_8bit=True  # memory efficient
     )
 
     bot = telebot.TeleBot(token)
@@ -46,11 +48,12 @@ def start_bot(token, chat_id):
         pass
 
     # AI reply function
-    def ask_local_ai(msg):
+    def ask_local_ai(prompt):
         try:
-            out = pipe(msg)
-            reply = out[0]["generated_text"]
-            return reply.strip()[:4000]
+            inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
+            output = model.generate(**inputs, max_new_tokens=150)
+            reply = tokenizer.decode(output[0], skip_special_tokens=True)
+            return reply
         except Exception as e:
             print("Error generating AI reply:", e)
             return "Sorry, I could not generate a reply."
@@ -74,7 +77,7 @@ def start_bot(token, chat_id):
     bot.polling(none_stop=True)
 
 # ---------------------------------
-# Start/Stop buttons
+# Streamlit Start/Stop buttons
 # ---------------------------------
 if st.button("Start UAserver AI Bot"):
     if not token or not chat_id:
