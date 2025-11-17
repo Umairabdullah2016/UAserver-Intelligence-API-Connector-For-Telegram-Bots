@@ -42,24 +42,32 @@ if "bot_instance" not in st.session_state:
 # LOCAL AI MODEL FUNCTION
 # ---------------------------------
 def ask_local_ai(msg):
-    messages = [{"role": "user", "content": msg}]
-    out = pipe(messages)
+    try:
+        messages = [{"role": "user", "content": msg}]
+        out = pipe(messages)
 
-    # Safely extract string from pipeline output
-    if isinstance(out, list):
-        if len(out) > 0:
-            if isinstance(out[0], dict) and "generated_text" in out[0]:
-                reply = out[0]["generated_text"]
+        # Robustly extract string from pipeline output
+        if isinstance(out, list):
+            # Flatten nested lists if necessary
+            while len(out) == 1 and isinstance(out[0], list):
+                out = out[0]
+
+            if len(out) > 0:
+                if isinstance(out[0], dict) and "generated_text" in out[0]:
+                    reply = out[0]["generated_text"]
+                else:
+                    reply = str(out[0])
             else:
-                reply = str(out[0])
+                reply = ""
         else:
-            reply = ""
-    else:
-        reply = str(out)
+            reply = str(out)
 
-    # Limit to Telegram max message length
-    return reply.strip()[:4000]
+        # Limit to Telegram max message length
+        return reply.strip()[:4000]
 
+    except Exception as e:
+        print("Error in ask_local_ai:", e)
+        return "Sorry, I could not generate a reply."
 
 # ---------------------------------
 # BOT STARTUP FUNCTION
