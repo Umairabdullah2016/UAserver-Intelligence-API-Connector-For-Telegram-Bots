@@ -44,8 +44,21 @@ if "bot_instance" not in st.session_state:
 def ask_local_ai(msg):
     messages = [{"role": "user", "content": msg}]
     out = pipe(messages)
-    reply = out[0]["generated_text"]
-    return reply.strip()
+
+    # Safely extract string from pipeline output
+    if isinstance(out, list):
+        if len(out) > 0:
+            if isinstance(out[0], dict) and "generated_text" in out[0]:
+                reply = out[0]["generated_text"]
+            else:
+                reply = str(out[0])
+        else:
+            reply = ""
+    else:
+        reply = str(out)
+
+    # Limit to Telegram max message length
+    return reply.strip()[:4000]
 
 
 # ---------------------------------
