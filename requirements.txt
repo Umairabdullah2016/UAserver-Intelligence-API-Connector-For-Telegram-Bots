@@ -6,3 +6,4 @@ sentencepiece
 numpy
 typing-extensions
 rich
+accelerate
