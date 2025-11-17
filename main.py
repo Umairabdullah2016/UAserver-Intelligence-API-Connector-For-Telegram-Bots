@@ -17,12 +17,17 @@ Messages will go through **Putter.js AI** in HTML and the reply will be sent bac
 token = st.text_input("Enter Your Telegram Bot Token:", type="password")
 chat_id = st.text_input("Enter Telegram Chat ID:", value="")
 
-# Store a message queue for Python-JS communication
-if "message_queue" not in st.session_state:
-    st.session_state.message_queue = []
+# ---------------------------------
+# Create multiprocessing manager and queues
+# ---------------------------------
+if "manager" not in st.session_state:
+    st.session_state.manager = multiprocessing.Manager()
+    st.session_state.message_queue = st.session_state.manager.list()
+    st.session_state.reply_queue = st.session_state.manager.list()
+    st.session_state.bot_process = None
 
-if "reply_queue" not in st.session_state:
-    st.session_state.reply_queue = []
+message_queue = st.session_state.message_queue
+reply_queue = st.session_state.reply_queue
 
 # ---------------------------------
 # JS AI HTML component
@@ -53,7 +58,7 @@ st.components.v1.html(html_code, height=200)
 # ---------------------------------
 # Function to run Telegram bot
 # ---------------------------------
-def start_bot(token, chat_id):
+def start_bot(token, chat_id, message_queue, reply_queue):
     bot = telebot.TeleBot(token)
 
     # Send startup message
@@ -65,17 +70,18 @@ def start_bot(token, chat_id):
     # Handle text messages
     @bot.message_handler(content_types=["text"])
     def handle(message):
-        # Put message in Streamlit session queue
-        st.session_state.message_queue.append({"text": message.text, "chat": message.chat.id, "msg_id": time.time()})
+        # Put message in the shared queue
+        msg_id = time.time()
+        message_queue.append({"text": message.text, "chat": message.chat.id, "msg_id": msg_id})
 
         # Wait for JS reply (polling)
         start_time = time.time()
         reply = "..."  # fallback if no reply
         while time.time() - start_time < 10:  # 10 sec timeout
-            for r in st.session_state.reply_queue:
-                if r["msg_id"] == st.session_state.message_queue[-1]["msg_id"]:
+            for r in reply_queue:
+                if r["msg_id"] == msg_id:
                     reply = r["preply"]
-                    st.session_state.reply_queue.remove(r)
+                    reply_queue.remove(r)
                     break
             if reply != "...":
                 break
@@ -88,15 +94,14 @@ def start_bot(token, chat_id):
 # ---------------------------------
 # Start/Stop buttons
 # ---------------------------------
-if "bot_process" not in st.session_state:
-    st.session_state.bot_process = None
-
 if st.button("Start UAserver AI Bot"):
     if not token or not chat_id:
         st.error("Enter both Bot Token and Chat ID.")
     else:
         if st.session_state.bot_process is None:
-            process = multiprocessing.Process(target=start_bot, args=(token, chat_id))
+            process = multiprocessing.Process(
+                target=start_bot, args=(token, chat_id, message_queue, reply_queue)
+            )
             process.start()
             st.session_state.bot_process = process
             st.success("✅ Bot started!")
