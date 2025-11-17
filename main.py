@@ -1,88 +1,74 @@
 import streamlit as st
 import telebot
 import multiprocessing
-import json
 import time
+from transformers import pipeline
 
 # ---------------------------------
 # Streamlit UI
 # ---------------------------------
-st.title("UAserver AI with Putter.js (v9.7.0)")
+st.title("UAserver AI Telegram Bot (Python AI) v9.7.0")
 
 st.markdown("""
 Enter your **Telegram Bot Token** and **Chat ID** below.
-Telegram messages will be passed to **Putter.js AI** in HTML and the AI reply will be sent back to Telegram automatically.
+The bot will automatically reply using Python AI (DialoGPT).
 """)
 
 token = st.text_input("Enter Your Telegram Bot Token:", type="password")
 chat_id = st.text_input("Enter Telegram Chat ID:", value="")
 
 # ---------------------------------
-# Create multiprocessing manager and queues
+# Multiprocessing manager & queues
 # ---------------------------------
 if "manager" not in st.session_state:
     st.session_state.manager = multiprocessing.Manager()
-    st.session_state.message_queue = st.session_state.manager.list()
-    st.session_state.reply_queue = st.session_state.manager.list()
     st.session_state.bot_process = None
 
-message_queue = st.session_state.message_queue
-reply_queue = st.session_state.reply_queue
+# ---------------------------------
+# Function to start bot
+# ---------------------------------
+def start_bot(token, chat_id):
+    # Load DialoGPT AI
+    pipe = pipeline(
+        "text-generation",
+        model="microsoft/DialoGPT-medium",
+        max_new_tokens=150,
+        temperature=0.7,
+        top_p=0.9
+    )
 
-# ---------------------------------
-# JS AI HTML component
-# ---------------------------------
-def render_js_ai(latest_message):
-    msg_json = json.dumps(latest_message)
-    html_code = f"""
-    <div id="js-ai"></div>
-    <script src="https://cdn.jsdelivr.net/npm/puter.js"></script>
-    <script>
-    let msg = {msg_json};
-    if(msg.text){{
-        Putter.generate(msg.text).then(preply => {{
-            window.parent.postMessage(JSON.stringify({{preply: preply, msg_id: msg.msg_id}}), "*");
-        }});
-    }}
-    </script>
-    """
-    st.components.v1.html(html_code, height=200)
-
-# Show latest Telegram message in JS AI
-latest_message = message_queue[-1] if len(message_queue) > 0 else {"text":"", "msg_id":0}
-render_js_ai(latest_message)
-
-# ---------------------------------
-# Function to run Telegram bot
-# ---------------------------------
-def start_bot(token, chat_id, message_queue, reply_queue):
     bot = telebot.TeleBot(token)
 
-    # Send startup message
+    # Startup message
     try:
         bot.send_message(chat_id, "Connected with UAserver Intelligence API 9.7.0")
     except:
         pass
 
-    # Handle text messages
+    # AI reply function
+    def ask_local_ai(msg):
+        try:
+            out = pipe(msg)
+            reply = out[0]["generated_text"]
+            return reply.strip()[:4000]
+        except Exception as e:
+            print("Error generating AI reply:", e)
+            return "Sorry, I could not generate a reply."
+
+    # Telegram handlers
+    @bot.message_handler(commands=["start"])
+    def start_cmd(message):
+        bot.send_message(message.chat.id, "Hey ✌️ I am UAserver AI!")
+
+    @bot.message_handler(commands=["stop"])
+    def stop_cmd(message):
+        bot.send_message(message.chat.id, "Bot stopped.")
+        raise SystemExit
+
     @bot.message_handler(content_types=["text"])
     def handle(message):
-        msg_id = time.time()
-        message_queue.append({"text": message.text, "chat": message.chat.id, "msg_id": msg_id})
-
-        # Wait for JS reply (polling)
-        start_time = time.time()
-        reply = "Sorry, no reply from AI."
-        while time.time() - start_time < 15:  # 15 sec timeout
-            for r in reply_queue:
-                if r["msg_id"] == msg_id:
-                    reply = r["preply"]
-                    reply_queue.remove(r)
-                    break
-            if reply != "Sorry, no reply from AI.":
-                break
-            time.sleep(0.5)
-
+        bot.send_chat_action(message.chat.id, "typing")
+        reply = ask_local_ai(message.text)
         bot.send_message(message.chat.id, f"🔹UAserver AI: {reply}")
 
     bot.polling(none_stop=True)
@@ -95,41 +81,17 @@ if st.button("Start UAserver AI Bot"):
         st.error("Enter both Bot Token and Chat ID.")
     else:
         if st.session_state.bot_process is None:
-            process = multiprocessing.Process(
-                target=start_bot, args=(token, chat_id, message_queue, reply_queue)
-            )
+            process = multiprocessing.Process(target=start_bot, args=(token, chat_id))
             process.start()
             st.session_state.bot_process = process
             st.success("✅ Bot started!")
         else:
-            st.info("Bot already running.")
+            st.info("Bot is already running.")
 
-if st.button("Stop Bot"):
+if st.button("Stop UAserver AI Bot"):
     if st.session_state.bot_process:
         st.session_state.bot_process.terminate()
         st.session_state.bot_process = None
         st.success("🛑 Bot stopped.")
     else:
         st.warning("Bot is not running.")
-
-# ---------------------------------
-# JS → Python listener
-# ---------------------------------
-# Streamlit automatically receives messages via `window.postMessage`
-# We need to poll the browser messages in Streamlit. This is handled by a small JS snippet:
-st.markdown("""
-<script>
-window.addEventListener("message", function(event) {
-    let data = event.data;
-    try{
-        let obj = JSON.parse(data);
-        if(obj.preply && obj.msg_id){
-            // Append to Streamlit reply queue
-            fetch(`/__reply__?data=${encodeURIComponent(JSON.stringify(obj))}`);
-        }
-    }catch(e){
-        console.log("Error parsing message:", e);
-    }
-});
-</script>
-""", unsafe_allow_html=True)
