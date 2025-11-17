@@ -2,4 +2,5 @@ pyTelegramBotAPI
 transformers
 torch
 telebot
+sentencepiece
 
